@@ -166,6 +166,9 @@ button.pill:hover { border-color: var(--muted); }
 .hand .card:hover, .hand .card.sel { transform: translateY(-16px); z-index: 5; box-shadow: 0 12px 24px rgba(0,0,0,.6); }
 .card.sel { outline: 3px solid var(--gold); }
 .card.off { filter: saturate(.3) brightness(.7); }
+.card.up { box-shadow: 0 0 0 2px var(--gold), 0 6px 14px rgba(0,0,0,.45); }
+.card.up .cname { color: #8a6a1d; }
+.opt:disabled { opacity: .4; cursor: default; }
 .cost {
   position: absolute; top: -8px; left: -8px;
   width: calc(var(--cw) * .26); height: calc(var(--cw) * .26); border-radius: 50%;
@@ -263,6 +266,28 @@ const CARDS = {
   thorns:   { name: '가시부적', cost: 1, type: 'pow', text: '공격받을 때마다\n반격 피해 3', fx: () => status(P(), 'thorns', 3) },
   guardian: { name: '수호령',   cost: 2, type: 'pow', text: '턴 시작마다\n방어도 4', fx: () => status(P(), 'ward', 4) },
 };
+// 강화된 부적: 바뀌는 값만 덮어씀 (휴식 장소에서 강화)
+const UP = {
+  strike:   { text: '피해 9', fx: t => hit(P(), t, 9) },
+  defend:   { text: '방어도 8', fx: () => block(P(), 8) },
+  fire:     { text: '피해 10\n화상 5', fx: t => { hit(P(), t, 10); status(t, 'burn', 5); } },
+  twin:     { text: '피해 6을 2회', fx: t => { hit(P(), t, 6); hit(P(), t, 6); } },
+  bash:     { text: '피해 13\n취약 3', fx: t => { hit(P(), t, 13); status(t, 'vuln', 3); } },
+  diamond:  { text: '방어도 11', fx: () => block(P(), 11) },
+  drain:    { text: '피해 9, 체력 6 회복\n소멸', fx: t => { hit(P(), t, 9); heal(P(), 6); } },
+  curse:    { text: '약화 3\n취약 3', fx: t => { status(t, 'weak', 3); status(t, 'vuln', 3); } },
+  focus:    { text: '카드 3장 뽑기', fx: () => draw(3) },
+  barrier:  { text: '방어도 18', fx: () => block(P(), 18) },
+  oath:     { text: '체력 2 잃고\n기력 2 얻기', fx: () => { lose(P(), 2); G.b.energy += 2; } },
+  sweep:    { text: '모든 적에게\n피해 10', fx: () => foes().forEach(e => hit(P(), e, 10)) },
+  wildfire: { text: '모든 적에게\n화상 6', fx: () => foes().forEach(e => status(e, 'burn', 6)) },
+  thunder:  { text: '모든 적에게\n피해 20', fx: () => foes().forEach(e => hit(P(), e, 20)) },
+  bodyslam: { cost: 0 },
+  might:    { text: '힘 3 얻기', fx: () => status(P(), 'str', 3) },
+  thorns:   { text: '공격받을 때마다\n반격 피해 5', fx: () => status(P(), 'thorns', 5) },
+  guardian: { text: '턴 시작마다\n방어도 6', fx: () => status(P(), 'ward', 6) },
+};
+const cardDef = c => c.up ? { ...CARDS[c.key], ...UP[c.key], name: CARDS[c.key].name + '+' } : CARDS[c.key];
 const STARTER = ['strike', 'strike', 'strike', 'strike', 'strike', 'defend', 'defend', 'defend', 'defend', 'fire'];
 const POOL = Object.keys(CARDS).filter(k => !['strike', 'defend'].includes(k));
 
@@ -472,7 +497,7 @@ function playCard(id, targetId) {
   const b = G.b;
   if (G.busy || !b) return;
   const c = b.hand.find(x => x.id === id); if (!c) return;
-  const d = CARDS[c.key];
+  const d = cardDef(c);
   if (d.cost > b.energy) { FX.push(['p', '기력 부족', 'st']); render(); return; }
   let t = null;
   if (d.tgt) {
@@ -533,8 +558,8 @@ function nextFloor() { G.reward = null; G.floor++; goNode(); }
 const esc = s => String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function cardHTML(c, opts = {}) {
-  const d = CARDS[c.key], [seal, tname] = TYPE[d.type];
-  const cls = ['card', 't-' + d.type, opts.off ? 'off' : '', opts.sel ? 'sel' : ''].join(' ');
+  const d = cardDef(c), [seal, tname] = TYPE[d.type];
+  const cls = ['card', 't-' + d.type, c.up ? 'up' : '', opts.off ? 'off' : '', opts.sel ? 'sel' : ''].join(' ');
   const act = opts.act ? `data-act="${opts.act}" data-id="${opts.id ?? c.id}"` : 'tabindex="-1"';
   return `<button class="${cls}" ${act} aria-label="${esc(d.name)}, 비용 ${d.cost}, ${esc(d.text.replace(/\n/g, ' '))}">
     <span class="cost">${d.cost}</span><span class="seal">${seal}</span>
@@ -586,7 +611,7 @@ function battleHTML() {
       <div class="hint">${G.busy ? '요괴들이 움직입니다…' : targeting ? '부적을 붙일 대상을 고르세요 (Esc 취소)' : `${b.turn}턴`}</div>
       <div class="bottom">
         <div class="side"><div class="energy" title="기력">${b.energy}/3<small>기력</small></div></div>
-        <div class="hand">${b.hand.map(c => cardHTML(c, { act: 'card', off: CARDS[c.key].cost > b.energy || G.busy, sel: b.sel === c.id })).join('')}</div>
+        <div class="hand">${b.hand.map(c => cardHTML(c, { act: 'card', off: cardDef(c).cost > b.energy || G.busy, sel: b.sel === c.id })).join('')}</div>
         <div class="side">
           <div class="piles">
             <button class="pill" data-act="view" data-id="draw">뽑을 더미 ${b.draw.length}</button>
@@ -623,6 +648,7 @@ function screenHTML() {
         <div class="row">
           <button class="opt" data-act="rest"><b>휴식</b><span>체력 ${amt} 회복 (현재 ${P().hp}/${P().max})</span></button>
           <button class="opt" data-act="view" data-id="remove"><b>부적 버리기</b><span>덱에서 부적 한 장 제거</span></button>
+          <button class="opt" data-act="view" data-id="upgrade" ${G.deck.some(c => !c.up) ? '' : 'disabled'}><b>부적 강화</b><span>부적 한 장의 효과를 영구히 올림</span></button>
         </div></div><div></div>`;
     }
     case 'end': return `<div></div><div class="center">
@@ -636,12 +662,13 @@ function overlayHTML() {
   const b = G.b;
   const map = {
     deck: ['덱 전체', G.deck], remove: ['제거할 카드를 고르세요', G.deck],
+    upgrade: ['강화할 부적을 고르세요 (강화 후 모습)', G.deck.filter(c => !c.up).map(c => ({ ...c, up: true }))],
     draw: ['뽑을 더미 (순서 무작위)', b ? [...b.draw].sort((x, y) => x.key.localeCompare(y.key)) : []],
     discard: ['버린 더미', b ? b.discard : []],
   };
   const [title, list] = map[o];
   return `<div class="overlay" role="dialog" aria-label="${title}"><header><h2>${title}</h2><button class="ghost" data-act="close">닫기</button></header>
-    <div class="grid">${list.length ? list.map(c => cardHTML(c, o === 'remove' ? { act: 'remove' } : {})).join('') : '<p style="color:var(--muted)">비어 있습니다.</p>'}</div></div>`;
+    <div class="grid">${list.length ? list.map(c => cardHTML(c, o === 'remove' || o === 'upgrade' ? { act: o } : {})).join('') : '<p style="color:var(--muted)">비어 있습니다.</p>'}</div></div>`;
 }
 function render() {
   const app = document.getElementById('app');
@@ -679,6 +706,7 @@ document.getElementById('app').addEventListener('click', e => {
     case 'skip': nextFloor(); break;
     case 'rest': heal(P(), Math.floor(P().max * 0.3)); nextFloor(); break;
     case 'remove': G.deck = G.deck.filter(c => c.id !== +id); G.overlay = null; nextFloor(); break;
+    case 'upgrade': G.deck.find(c => c.id === +id).up = true; G.overlay = null; nextFloor(); break;
     case 'view': G.overlay = id; render(); break;
     case 'close': G.overlay = null; render(); break;
   }
